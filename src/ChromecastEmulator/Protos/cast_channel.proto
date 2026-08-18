@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package cast_channel;
+
+option csharp_namespace = "ChromecastEmulator.Proto";
+
+// Wire-compatible subset of Chromium's cast_channel.proto, transcribed to proto3
+// because the C# protobuf runtime cannot compile proto2.
+//
+// Senders parse this as proto2 where protocol_version, source_id, destination_id,
+// namespace and payload_type are `required`. proto3 omits default-valued fields
+// from the wire unless they have explicit presence, and an omitted required field
+// makes the sender's parse fail outright -- hence `optional` on every scalar here.
+message CastMessage {
+  enum ProtocolVersion {
+    CASTV2_1_0 = 0;
+    CASTV2_1_1 = 1;
+    CASTV2_1_2 = 2;
+    CASTV2_1_3 = 3;
+  }
+
+  enum PayloadType {
+    STRING = 0;
+    BINARY = 1;
+  }
+
+  optional ProtocolVersion protocol_version = 1;
+  optional string source_id = 2;
+  optional string destination_id = 3;
+  optional string namespace = 4;
+  optional PayloadType payload_type = 5;
+  optional string payload_utf8 = 6;
+  optional bytes payload_binary = 7;
+}
+
+enum SignatureAlgorithm {
+  UNSPECIFIED = 0;
+  RSASSA_PKCS1v15 = 1;
+  RSASSA_PSS = 2;
+}
+
+enum HashAlgorithm {
+  SHA1 = 0;
+  SHA256 = 1;
+}
+
+message AuthChallenge {
+  optional SignatureAlgorithm signature_algorithm = 1;
+  optional bytes sender_nonce = 2;
+  optional HashAlgorithm hash_algorithm = 3;
+}
+
+message AuthResponse {
+  optional bytes signature = 1;
+  optional bytes client_auth_certificate = 2;
+  repeated bytes intermediate_certificate = 3;
+  optional SignatureAlgorithm signature_algorithm = 4;
+  optional bytes sender_nonce = 5;
+  optional HashAlgorithm hash_algorithm = 6;
+  optional bytes crl = 7;
+}
+
+message AuthError {
+  enum ErrorType {
+    INTERNAL_ERROR = 0;
+    NO_TLS = 1;
+    SIGNATURE_ALGORITHM_UNAVAILABLE = 2;
+  }
+
+  optional ErrorType error_type = 1;
+}
+
+message DeviceAuthMessage {
+  optional AuthChallenge challenge = 1;
+  optional AuthResponse response = 2;
+  optional AuthError error = 3;
+}

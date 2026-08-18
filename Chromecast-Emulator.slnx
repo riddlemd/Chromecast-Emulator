@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ChromecastEmulator/ChromecastEmulator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ChromecastEmulator.TestSupport/ChromecastEmulator.TestSupport.csproj" />
+    <Project Path="tests/ChromecastEmulator.UnitTests/ChromecastEmulator.UnitTests.csproj" />
+    <Project Path="tests/ChromecastEmulator.IntegrationTests/ChromecastEmulator.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

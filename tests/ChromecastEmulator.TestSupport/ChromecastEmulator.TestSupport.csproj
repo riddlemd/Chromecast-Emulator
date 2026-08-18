@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>ChromecastEmulator.TestSupport</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/ChromecastEmulator/ChromecastEmulator.csproj" />
+  </ItemGroup>
+
+</Project>
