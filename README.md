@@ -5,7 +5,7 @@ Chromecast, accepts TLS cast channel connections on port 8009, and speaks enough
 CASTV2 protocol that a sender can discover it, launch an app, load media, and drive
 playback — without any hardware.
 
-Built for testing senders. It simulates receiver state; it does not render anything.
+Built for testing senders.
 
 ## The authentication caveat
 
