@@ -2,6 +2,7 @@ using ChromecastEmulator;
 using ChromecastEmulator.Device;
 using ChromecastEmulator.Discovery;
 using ChromecastEmulator.Protocol;
+using ChromecastEmulator.Render;
 using ChromecastEmulator.Transport;
 using Microsoft.Extensions.Logging;
 
@@ -38,6 +39,32 @@ var router = new MessageRouter(loggerFactory.CreateLogger<MessageRouter>());
 var server = new CastChannelServer(options, identity, router, frames, loggerFactory);
 var broadcaster = new StatusBroadcaster(server, device);
 
+using var pipeline = options.Render
+    ? new HlsPipeline(
+        options,
+        // Flat, not nested: the pipeline removes exactly this directory on dispose.
+        Path.Combine(Path.GetTempPath(), $"chromecast-emulator-{Environment.ProcessId}"),
+        loggerFactory.CreateLogger<HlsPipeline>())
+    : null;
+using var playerServer = pipeline is null
+    ? null
+    : new PlayerServer(options.RenderPort, pipeline.OutputDirectory, loggerFactory.CreateLogger<PlayerServer>());
+var renderWindow = options.Render ? new RenderWindow(options, loggerFactory.CreateLogger<RenderWindow>()) : null;
+using var renderer = pipeline is null || renderWindow is null
+    ? null
+    : new RenderController(pipeline, renderWindow, device, loggerFactory.CreateLogger<RenderController>());
+
+if (renderer is not null)
+{
+    // Tearing down the app session ends playback, but nothing in the media namespace
+    // reports it — the receiver namespace does.
+    device.StatusChanged += () =>
+    {
+        if (!device.Sessions.Any(s => s.Media is not null)) renderer.Clear();
+    };
+    device.Volume.Changed += renderer.SetVolume;
+}
+
 router.Register(CastNamespaces.Connection, new ConnectionHandler(loggerFactory.CreateLogger<ConnectionHandler>()));
 router.Register(CastNamespaces.Heartbeat, new HeartbeatHandler());
 router.Register(CastNamespaces.DeviceAuth,
@@ -45,7 +72,7 @@ router.Register(CastNamespaces.DeviceAuth,
 router.Register(CastNamespaces.Receiver,
     new ReceiverHandler(device, broadcaster, loggerFactory.CreateLogger<ReceiverHandler>()));
 router.Register(CastNamespaces.Media,
-    new MediaHandler(options, device, broadcaster, shutdown.Token, loggerFactory.CreateLogger<MediaHandler>()));
+    new MediaHandler(options, device, broadcaster, shutdown.Token, loggerFactory.CreateLogger<MediaHandler>(), renderer));
 router.RegisterFallback(new CustomNamespaceHandler(options, loggerFactory.CreateLogger<CustomNamespaceHandler>()));
 
 log.LogInformation("device id {DeviceId}  \"{FriendlyName}\"  auth={AuthMode}",
@@ -70,6 +97,21 @@ if (!options.NoConsole && !Console.IsInputRedirected)
     log.LogInformation("type 'help' for console commands");
     _ = new EmulatorConsole(device, server, broadcaster, shutdown, loggerFactory.CreateLogger<EmulatorConsole>())
         .RunAsync();
+}
+
+if (renderWindow is not null && playerServer is not null)
+{
+    playerServer.Start();
+
+    // Closing the window quits, and `quit` or ctrl-c has to close the window — the main
+    // thread is parked in the run loop below and would otherwise never come back.
+    renderWindow.Closed += shutdown.Cancel;
+    using var closeOnShutdown = shutdown.Token.Register(renderWindow.Close);
+
+    // AppKit's run loop has to own the main thread, so the accept loop stays on the
+    // thread pool and the window blocks here until it closes. Opening a window we have
+    // already been asked to shut down would park the main thread for good.
+    if (!shutdown.IsCancellationRequested) renderWindow.Run(playerServer.BaseUrl);
 }
 
 try

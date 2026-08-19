@@ -5,8 +5,37 @@ namespace ChromecastEmulator.Device;
 
 public sealed class Volume
 {
-    public double Level { get; set; } = 1.0;
-    public bool Muted { get; set; }
+    private double _level = 1.0;
+    private bool _muted;
+
+    /// Raised on every change. The receiver namespace, the media namespace and the
+    /// console all set volume, so subscribers hook this rather than each call site.
+    /// Unrelated to `VirtualDevice.StatusChanged` — volume is absent from the mDNS TXT
+    /// records and must not trigger a republish.
+    public event Action<Volume>? Changed;
+
+    public double Level
+    {
+        get => _level;
+        set
+        {
+            if (_level.Equals(value)) return;
+            _level = value;
+            Changed?.Invoke(this);
+        }
+    }
+
+    public bool Muted
+    {
+        get => _muted;
+        set
+        {
+            if (_muted == value) return;
+            _muted = value;
+            Changed?.Invoke(this);
+        }
+    }
+
     public double StepInterval { get; set; } = 0.05;
 
     /// Single owner of the wire-shape parsing so the receiver and media namespaces

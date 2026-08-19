@@ -34,6 +34,18 @@ public sealed class EmulatorOptions
     public bool NoConsole { get; set; }
     public string? LogFile { get; set; }
 
+    public bool Render { get; set; }
+    public int RenderWidth { get; set; } = 1280;
+    public int RenderHeight { get; set; } = 720;
+    public int RenderPort { get; set; }
+    public string FfmpegPath { get; set; } = "ffmpeg";
+    public string FfmpegVideoBitrate { get; set; } = "4M";
+
+    /// VideoToolbox is hardware-backed on macOS; everywhere else libx264 is the only
+    /// encoder ffmpeg is guaranteed to have been built with.
+    public string FfmpegVideoCodec { get; set; } =
+        OperatingSystem.IsMacOS() ? "h264_videotoolbox" : "libx264";
+
     public string StateDirectory { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".chromecast-emulator");
 
@@ -95,6 +107,33 @@ public sealed class EmulatorOptions
                     case "--echo":
                         options.EchoCustom = true;
                         break;
+                    case "--render":
+                        options.Render = true;
+                        break;
+                    case "--render-size":
+                    {
+                        var size = Next(arg).Split('x', 2);
+                        if (size.Length != 2) throw new FormatException("size must look like 1280x720");
+                        options.RenderWidth = int.Parse(size[0]);
+                        options.RenderHeight = int.Parse(size[1]);
+                        if (options.RenderWidth < 1 || options.RenderHeight < 1)
+                            throw new FormatException("size must be positive");
+                        break;
+                    }
+                    case "--render-port":
+                        options.RenderPort = int.Parse(Next(arg));
+                        if (options.RenderPort is < 1 or > 65535)
+                            throw new FormatException("port must be between 1 and 65535");
+                        break;
+                    case "--ffmpeg":
+                        options.FfmpegPath = Next(arg);
+                        break;
+                    case "--video-codec":
+                        options.FfmpegVideoCodec = Next(arg);
+                        break;
+                    case "--video-bitrate":
+                        options.FfmpegVideoBitrate = Next(arg);
+                        break;
                     case "--state-dir":
                         options.StateDirectory = Next(arg);
                         break;
@@ -153,6 +192,14 @@ public sealed class EmulatorOptions
               --default-duration <s> Duration applied to LOAD requests that omit one (default: off)
               --ping-interval <s>    Heartbeat PING interval, 0 disables (default: 5)
               --echo                 Echo custom-namespace messages back to the sender
+
+        RENDER
+              --render               Open a window that plays loaded media (needs ffmpeg)
+              --render-size <WxH>    Window size (default: 1280x720)
+              --render-port <n>      Loopback port for the player page (default: an unused one)
+              --ffmpeg <path>        ffmpeg executable (default: ffmpeg)
+              --video-codec <name>   ffmpeg encoder (default: h264_videotoolbox on macOS, else libx264)
+              --video-bitrate <rate> Target video bitrate (default: 4M)
 
         OUTPUT
           -v, --verbose              Log full payloads including heartbeats

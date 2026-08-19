@@ -3,6 +3,7 @@ using ChromecastEmulator;
 using ChromecastEmulator.Device;
 using ChromecastEmulator.Proto;
 using ChromecastEmulator.Protocol;
+using ChromecastEmulator.Render;
 using ChromecastEmulator.Transport;
 using ChromecastEmulator.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -11,7 +12,8 @@ namespace ChromecastEmulator.IntegrationTests.Protocol;
 
 public class MediaHandlerTests
 {
-    private static (VirtualDevice Device, EmulatorOptions Options, MediaHandler Handler) CreateSut(Action<EmulatorOptions>? configure = null)
+    private static (VirtualDevice Device, EmulatorOptions Options, MediaHandler Handler) CreateSut(
+        Action<EmulatorOptions>? configure = null, IMediaRenderer? renderer = null)
     {
         var options = new EmulatorOptions();
         configure?.Invoke(options);
@@ -20,7 +22,7 @@ public class MediaHandlerTests
         var registry = Substitute.For<IConnectionRegistry>();
         registry.Connections.Returns([]);
         var broadcaster = new StatusBroadcaster(registry, device);
-        var handler = new MediaHandler(options, device, broadcaster, CancellationToken.None, NullLogger<MediaHandler>.Instance);
+        var handler = new MediaHandler(options, device, broadcaster, CancellationToken.None, NullLogger<MediaHandler>.Instance, renderer);
         return (device, options, handler);
     }
 
@@ -69,6 +71,30 @@ public class MediaHandlerTests
         Assert.Equal("INVALID_REQUEST", payload["type"]!.GetValue<string>());
         Assert.Equal("INVALID_REQUEST", payload["reason"]!.GetValue<string>());
         Assert.Equal(1, payload["requestId"]!.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData("""{"type":"LOAD","requestId":11,"media":{"contentId":"x"}}""", 11)]
+    [InlineData("""{"type":"GET_STATUS","requestId":12}""", 12)]
+    [InlineData("""{"type":"PLAY","requestId":13,"mediaSessionId":1}""", 13)]
+    [InlineData("""{"type":"PAUSE","requestId":14,"mediaSessionId":1}""", 14)]
+    [InlineData("""{"type":"SEEK","requestId":15,"mediaSessionId":1,"currentTime":2}""", 15)]
+    [InlineData("""{"type":"SET_PLAYBACK_RATE","requestId":16,"mediaSessionId":1,"playbackRate":2}""", 16)]
+    public async Task HandleAsync_AnyMediaCommand_EchoesTheRequestId(string request, int expected)
+    {
+        await using var channel = await LoopbackChannel.CreateAsync();
+        var (device, _, handler) = CreateSut();
+        var session = device.Launch("CC1AD845")!;
+        session.StartMedia([], 0, autoplay: true, null);
+
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media, request,
+            destination: session.TransportId), CancellationToken.None);
+        var reply = await channel.ReadAsync();
+
+        // Senders correlate replies by requestId and hang without it.
+        Assert.Equal(expected, JsonNode.Parse(reply.PayloadUtf8)!["requestId"]!.GetValue<int>());
+
+        session.Dispose();
     }
 
     [Fact]
@@ -229,6 +255,95 @@ public class MediaHandlerTests
         var payload = JsonNode.Parse(reply.PayloadUtf8)!.AsObject();
         Assert.Equal("INVALID_REQUEST", payload["type"]!.GetValue<string>());
         Assert.Equal("INVALID_COMMAND", payload["reason"]!.GetValue<string>());
+
+        session.Dispose();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Load_CallsRendererLoad()
+    {
+        await using var channel = await LoopbackChannel.CreateAsync();
+        var renderer = Substitute.For<IMediaRenderer>();
+        var (device, _, handler) = CreateSut(renderer: renderer);
+        var session = device.Launch("CC1AD845")!;
+
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media,
+            """{"type":"LOAD","requestId":1,"media":{"contentId":"x"}}""",
+            destination: session.TransportId), CancellationToken.None);
+        await channel.ReadAsync();
+
+        renderer.Received(1).Load(session.Media!);
+
+        session.Dispose();
+    }
+
+    [Theory]
+    [InlineData("""{"type":"PLAY","requestId":2}""")]
+    [InlineData("""{"type":"PAUSE","requestId":2}""")]
+    [InlineData("""{"type":"SEEK","requestId":2,"currentTime":5}""")]
+    public async Task HandleAsync_TransportCommand_CallsRendererSync(string commandJson)
+    {
+        await using var channel = await LoopbackChannel.CreateAsync();
+        var renderer = Substitute.For<IMediaRenderer>();
+        var (device, _, handler) = CreateSut(renderer: renderer);
+        var session = device.Launch("CC1AD845")!;
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media,
+            """{"type":"LOAD","requestId":1,"media":{"contentId":"x","duration":100}}""",
+            destination: session.TransportId), CancellationToken.None);
+        await channel.ReadAsync();
+        renderer.ClearReceivedCalls();
+
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media,
+            commandJson, destination: session.TransportId), CancellationToken.None);
+        await channel.ReadAsync();
+
+        renderer.Received(1).Sync(session.Media!);
+
+        session.Dispose();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Stop_CallsRendererClear()
+    {
+        await using var channel = await LoopbackChannel.CreateAsync();
+        var renderer = Substitute.For<IMediaRenderer>();
+        var (device, _, handler) = CreateSut(renderer: renderer);
+        var session = device.Launch("CC1AD845")!;
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media,
+            """{"type":"LOAD","requestId":1,"media":{"contentId":"x"}}""",
+            destination: session.TransportId), CancellationToken.None);
+        await channel.ReadAsync();
+
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media,
+            """{"type":"STOP","requestId":2}""", destination: session.TransportId), CancellationToken.None);
+        await channel.ReadAsync();
+
+        renderer.Received(1).Clear();
+
+        session.Dispose();
+    }
+
+    [Fact]
+    public async Task HandleAsync_Volume_DoesNotCallSyncOrSetVolumeOnRenderer()
+    {
+        // Volume.Changed reaches the renderer on its own now (wired outside MediaHandler);
+        // MediaHandler must not double-drive it.
+        await using var channel = await LoopbackChannel.CreateAsync();
+        var renderer = Substitute.For<IMediaRenderer>();
+        var (device, _, handler) = CreateSut(renderer: renderer);
+        var session = device.Launch("CC1AD845")!;
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media,
+            """{"type":"LOAD","requestId":1,"media":{"contentId":"x"}}""",
+            destination: session.TransportId), CancellationToken.None);
+        await channel.ReadAsync();
+        renderer.ClearReceivedCalls();
+
+        await handler.HandleAsync(channel.Receiver, CastMessages.Text(CastNamespaces.Media,
+            """{"type":"VOLUME","requestId":2,"volume":{"level":0.3}}""", destination: session.TransportId), CancellationToken.None);
+        await channel.ReadAsync();
+
+        renderer.DidNotReceive().Sync(Arg.Any<MediaSession>());
+        renderer.DidNotReceive().SetVolume(Arg.Any<Volume>());
 
         session.Dispose();
     }

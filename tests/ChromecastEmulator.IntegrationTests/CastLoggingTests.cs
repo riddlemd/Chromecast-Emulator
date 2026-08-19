@@ -200,7 +200,7 @@ public sealed class CastLoggingTests : IDisposable
     }
 
     [Fact]
-    public void LogFile_ProducesParseableJsonLines()
+    public void LogFile_WritesFramesInTheOrderTheyArrived()
     {
         var journal = Journal(Options(), (_, frames) =>
         {
@@ -208,8 +208,12 @@ public sealed class CastLoggingTests : IDisposable
                 frames.Inbound("peer", Text(CastNamespaces.Media, $$"""{"type":"LOAD","requestId":{{i}}}"""));
         });
 
+        // Harnesses replay the journal to reconstruct a session, so interleaving from the
+        // async file sink would corrupt it. Parseability is already covered by the
+        // documented-fields and escaping tests.
         Assert.Equal(20, journal.Length);
-        foreach (var record in journal)
-            Assert.Equal(JsonValueKind.String, JsonDocument.Parse(record["payload"]!.ToJsonString()).RootElement.ValueKind);
+        Assert.Equal(
+            Enumerable.Range(0, 20),
+            journal.Select(r => JsonNode.Parse(r["payload"]!.GetValue<string>())!["requestId"]!.GetValue<int>()));
     }
 }

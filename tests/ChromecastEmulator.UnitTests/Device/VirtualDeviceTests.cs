@@ -270,13 +270,18 @@ public class VirtualDeviceTests
         Assert.False(app["isIdleScreen"]!.GetValue<bool>());
     }
 
-    [Fact]
-    public void BuildReceiverStatus_AlwaysIncludesUserEqAndVolume()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BuildReceiverStatus_IdleOrCasting_IncludesUserEqAndVolume(bool casting)
     {
         var device = CreateDevice();
+        if (casting) device.Launch("CC1AD845");
 
         var status = device.BuildReceiverStatus();
 
+        // Senders read volume off RECEIVER_STATUS in both states; the idle branch building
+        // a different envelope has bitten us before.
         Assert.NotNull(status["userEq"]);
         Assert.NotNull(status["volume"]);
     }

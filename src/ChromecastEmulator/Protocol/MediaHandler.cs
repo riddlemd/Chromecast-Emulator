@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using ChromecastEmulator.Device;
 using ChromecastEmulator.Proto;
+using ChromecastEmulator.Render;
 using ChromecastEmulator.Transport;
 using Microsoft.Extensions.Logging;
 
@@ -14,14 +15,18 @@ public sealed class MediaHandler : ICastNamespaceHandler
     private readonly StatusBroadcaster _broadcaster;
     private readonly CancellationToken _shutdown;
     private readonly ILogger<MediaHandler> _logger;
+    private readonly IMediaRenderer _renderer;
 
-    public MediaHandler(EmulatorOptions options, VirtualDevice device, StatusBroadcaster broadcaster, CancellationToken shutdown, ILogger<MediaHandler> logger)
+    public MediaHandler(
+        EmulatorOptions options, VirtualDevice device, StatusBroadcaster broadcaster, CancellationToken shutdown,
+        ILogger<MediaHandler> logger, IMediaRenderer? renderer = null)
     {
         _options = options;
         _device = device;
         _broadcaster = broadcaster;
         _shutdown = shutdown;
         _logger = logger;
+        _renderer = renderer ?? NullMediaRenderer.Instance;
     }
 
     public async Task HandleAsync(CastConnection connection, CastMessage message, CancellationToken ct)
@@ -105,6 +110,10 @@ public sealed class MediaHandler : ICastNamespaceHandler
                 return;
         }
 
+        // VOLUME needs nothing here: Volume.Changed reaches the renderer on its own.
+        if (type == "STOP") _renderer.Clear();
+        else if (type != "VOLUME") _renderer.Sync(media);
+
         _logger.LogInformation("media {MessageType} -> {PlayerState} @ {CurrentTime:F1}s", type, media.PlayerState, media.CurrentTime);
         await connection.ReplyAsync(message, BuildStatus(session, requestId, includeMedia: false), ct);
         await _broadcaster.MediaStatusAsync(session, includeMedia: false, ct);
@@ -135,6 +144,7 @@ public sealed class MediaHandler : ICastNamespaceHandler
 
         var mediaSession = session.StartMedia(media, startTime, autoplay, payload["customData"]?.DeepClone());
         mediaSession.Finished += OnFinished;
+        _renderer.Load(mediaSession);
 
         _logger.LogInformation("loaded {ContentId} on {TransportId} (mediaSessionId {MediaSessionId})", media["contentId"], session.TransportId, mediaSession.MediaSessionId);
 
@@ -148,6 +158,7 @@ public sealed class MediaHandler : ICastNamespaceHandler
         if (session is null) return;
 
         _logger.LogInformation("media finished on {TransportId}", session.TransportId);
+        _renderer.Sync(media);
         _ = BroadcastFinishedAsync(session);
     }
 

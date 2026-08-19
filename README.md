@@ -63,6 +63,14 @@ PROTOCOL
       --ping-interval <s>    Heartbeat PING interval, 0 disables (default: 5)
       --echo                 Echo custom-namespace messages back to the sender
 
+RENDER
+      --render               Open a window that plays loaded media (needs ffmpeg)
+      --render-size <WxH>    Window size (default: 1280x720)
+      --render-port <n>      Loopback port for the player page (default: an unused one)
+      --ffmpeg <path>        ffmpeg executable (default: ffmpeg)
+      --video-codec <name>   ffmpeg encoder (default: h264_videotoolbox on macOS, else libx264)
+      --video-bitrate <rate> Target video bitrate (default: 4M)
+
 OUTPUT
   -v, --verbose              Log full payloads including heartbeats and mDNS records
   -q, --quiet                Errors only
@@ -118,6 +126,12 @@ Media playback is simulated against a stopwatch: `currentTime` advances while PL
 freezes on PAUSE, and the session flips to `IDLE`/`FINISHED` with an unsolicited
 `MEDIA_STATUS` when it reaches the media duration.
 
+**`--render`** additionally plays the media for real, so you can see what you cast: ffmpeg
+transcodes the `contentId` to HLS, a loopback HTTP server serves it, and a Photino webview
+plays it through hls.js. The stopwatch above stays authoritative for what senders are told
+— the window mirrors it — so protocol behaviour is identical whether or not the window is
+open. Closing the window shuts the emulator down.
+
 Status changes are broadcast to every sender holding a virtual connection to the relevant
 destination, matching how a real device pushes `RECEIVER_STATUS` and `MEDIA_STATUS`.
 
@@ -128,7 +142,8 @@ destination, matching how a real device pushes `RECEIVER_STATUS` and `MEDIA_STAT
 - Multizone / audio groups
 - DIAL and the `:8008/setup/eureka_info` HTTP surface
 - Cast Connect / Android TV receiver semantics
-- Actually rendering a receiver web app
+- Running a real receiver web app — `--render` plays the media, it does not host the
+  CAF receiver the sender's app id would normally load
 
 ## Layout
 
@@ -139,6 +154,7 @@ src/ChromecastEmulator/
   Protocol/                   namespace handlers, routing, broadcasts
   Device/                     virtual device, app sessions, media clock
   Discovery/                  mDNS advertisement
+  Render/                     --render window: ffmpeg -> HLS -> Photino webview
 tools/test-sender.py          dependency-free CASTV2 client and smoke test
 ```
 
@@ -150,3 +166,5 @@ tools/test-sender.py          dependency-free CASTV2 client and smoke test
   explicit presence — without `optional` the sender's parse fails.
 - On macOS the private key must make a PKCS#12 round-trip before `SslStream` will accept
   it for server authentication; `DeviceIdentity` does this.
+- `--render` needs the process main thread for the window's event loop, so the Cast accept
+  loop runs behind it on the thread pool. Without `--render` nothing changes.

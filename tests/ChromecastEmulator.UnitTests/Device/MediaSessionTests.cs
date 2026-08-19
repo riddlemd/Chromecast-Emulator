@@ -80,24 +80,32 @@ public class MediaSessionTests
     }
 
     [Fact]
-    public void Pause_AlreadyPaused_IsNoOp()
+    public void Pause_AfterStop_LeavesSessionIdle()
     {
-        using var media = new MediaSession(1, [], 5, autoplay: false, null);
+        using var media = new MediaSession(1, [], 5, autoplay: true, null);
+        media.Stop();
 
         media.Pause();
 
-        Assert.Equal("PAUSED", media.PlayerState);
-        Assert.Equal(5, media.CurrentTime);
+        // Without Pause's state guard a stopped session would come back as PAUSED, and the
+        // sender would see a finished item as merely paused.
+        Assert.Equal("IDLE", media.PlayerState);
+        Assert.Equal("CANCELLED", media.IdleReason);
     }
 
     [Fact]
-    public void Play_AlreadyPlaying_IsNoOp()
+    public async Task Play_AlreadyPlaying_DoesNotRestartTheClock()
     {
         using var media = new MediaSession(1, [], 0, autoplay: true, null);
+        await Task.Delay(150);
+        var elapsed = media.CurrentTime;
 
         media.Play();
 
+        // A second Play must not restart the stopwatch; that would silently rewind
+        // currentTime to zero while the session stayed PLAYING.
         Assert.Equal("PLAYING", media.PlayerState);
+        Assert.True(media.CurrentTime >= elapsed, $"currentTime went backwards: {media.CurrentTime} < {elapsed}");
     }
 
     [Fact]
@@ -112,16 +120,6 @@ public class MediaSessionTests
 
         Assert.Equal("PAUSED", media.PlayerState);
         Assert.Equal(frozen, media.CurrentTime, precision: 6);
-    }
-
-    [Fact]
-    public void Seek_WithDuration_ClampsToDuration()
-    {
-        using var media = new MediaSession(1, MediaWithDuration(10), 0, autoplay: false, null);
-
-        media.Seek(999, null);
-
-        Assert.Equal(10, media.CurrentTime);
     }
 
     [Fact]

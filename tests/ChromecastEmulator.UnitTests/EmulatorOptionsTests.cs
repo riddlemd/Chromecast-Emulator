@@ -23,6 +23,13 @@ public class EmulatorOptionsTests
         Assert.False(options.Verbose);
         Assert.False(options.Quiet);
         Assert.False(options.NoConsole);
+        Assert.False(options.Render);
+        Assert.Equal(1280, options.RenderWidth);
+        Assert.Equal(720, options.RenderHeight);
+        Assert.Equal(0, options.RenderPort);
+        Assert.Equal("ffmpeg", options.FfmpegPath);
+        Assert.Equal("4M", options.FfmpegVideoBitrate);
+        Assert.False(string.IsNullOrWhiteSpace(options.FfmpegVideoCodec));
     }
 
     [Fact]
@@ -200,6 +207,56 @@ public class EmulatorOptionsTests
 
         Assert.Null(options);
         Assert.StartsWith("bad value for --port", error);
+    }
+
+    [Fact]
+    public void Parse_RenderFlags_PopulatesRenderOptions()
+    {
+        var (options, error) = EmulatorOptions.Parse([
+            "--render",
+            "--render-size", "1920x1080",
+            "--render-port", "9010",
+            "--ffmpeg", "/usr/local/bin/ffmpeg",
+            "--video-codec", "libx265",
+            "--video-bitrate", "8M",
+        ]);
+
+        Assert.Null(error);
+        Assert.NotNull(options);
+        Assert.True(options.Render);
+        Assert.Equal(1920, options.RenderWidth);
+        Assert.Equal(1080, options.RenderHeight);
+        Assert.Equal(9010, options.RenderPort);
+        Assert.Equal("/usr/local/bin/ffmpeg", options.FfmpegPath);
+        Assert.Equal("libx265", options.FfmpegVideoCodec);
+        Assert.Equal("8M", options.FfmpegVideoBitrate);
+    }
+
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("1280")]
+    [InlineData("0x100")]
+    [InlineData("100x0")]
+    public void Parse_RenderSizeMalformed_ReturnsBadValueError(string size)
+    {
+        var (options, error) = EmulatorOptions.Parse(["--render-size", size]);
+
+        Assert.Null(options);
+        Assert.NotNull(error);
+        Assert.StartsWith("bad value for --render-size", error);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("70000")]
+    public void Parse_RenderPortOutOfRange_ReturnsBadValueError(string port)
+    {
+        var (options, error) = EmulatorOptions.Parse(["--render-port", port]);
+
+        Assert.Null(options);
+        Assert.NotNull(error);
+        Assert.StartsWith("bad value for --render-port", error);
     }
 
     [Fact]
